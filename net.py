@@ -4,13 +4,30 @@ import torch.nn as nn
 
 def get_deconv(deconv_type, in_ch, out_ch, bias=False):
     if deconv_type == 'deconv':
-        return nn.ConvTranspose2d(in_ch, out_ch, 4, stride=2, bias=bias)
+        layer = nn.Sequential((
+            nn.ReflectionPad2d(1),
+            nn.ConvTranspose2d(in_ch, out_ch, 4, stride=2, bias=bias)))
+        return layer
     else:
         layer = nn.Sequential((
             nn.Upsample(scale_factor=2, mode='bilinear'),
             nn.ReflectionPad2d(1),
             nn.Conv2d(in_ch, out_ch, kernel_size=3, bias=bias)))
         return layer
+
+
+class CBR(nn.Module):
+
+    def __init__(self, in_ch, out_ch, norm='', sample='down',
+                 activation='relu', dropout=None):
+        super(CBR, self).__init__()
+
+
+def cbr(in_ch, out_ch, norm, sample='down', activation='relu', dropout=None):
+    if sample not in ('down', 'deconv', 'upconv'):
+        msg = 'Invalid parameter for sample. Use down, deconv, or upconv'
+        raise ValueError(msg)
+    # cbr_block = nn.Sequential((nn.
 
 
 class Generator(nn.Module):
@@ -47,8 +64,10 @@ class Generator(nn.Module):
         # Activations
         if relu == 'relu6':
             self.relu = nn.ReLU6(inplace=True)
-        else:
+        elif relu == 'relu':
             self.relu = nn.ReLU(inplace=True)
+        else:
+            self.relu = nn.LeakyReLU(inplace=True)
 
     def forward(self, x):
         # use skip connections. Here, simply conncatenate channels.
@@ -82,11 +101,11 @@ class Generator(nn.Module):
         h = self.relu(self.norm7(self.deconv7(self.pad7(h))))
         stored_downsampled['l7'] = h[:, -6:, Ellipsis]
         h = torch.cat([h, h1], dim=1)
-        y = self.relu(self.deconv8(self.pad8(h)))
+        y = self.deconv8(self.pad8(h))
         return y, stored_downsampled
 
     def render(self, x, y):
-        mask = y[:, 0, Ellipsis]
+        mask = y[:, 0, Ellipsis].unsqueeze(1).expand_as(y)
         y = y[:, 1:, Ellipsis]
         return mask * y + (1 - mask) * x, torch.norm(mask, p=self.mask_norm)
 
@@ -112,8 +131,10 @@ class Discriminator(nn.Module):
         # Activations
         if relu == 'relu6':
             self.relu = nn.ReLU6(inplace=True)
-        else:
+        elif relu == 'relu':
             self.relu = nn.ReLU(inplace=True)
+        else:
+            self.relu = nn.LeakyReLU(inplace=True)
 
     def forward(self, x):
         h = self.relu(self.conv1(self.pad1(x)))

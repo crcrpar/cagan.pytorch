@@ -2,6 +2,10 @@ import argparse
 from datetime import datetime as dt
 import os
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
@@ -30,15 +34,34 @@ def normalize(variable):
     return (variable - mean) / std
 
 
-def patch_loss(y_in, y_out, same=True):
-    batch_size, _, w, h = y_in.size()
+def patch_dis_loss(y_positive, y_negative):
+    batch_size, _, w, h = y_positive.size()
     denom = batch_size * w * h
-    if same:
-        l1 = F.softplus(y_in).sum() / denom
-    else:
-        l1 = F.softplus(-y_in).sum() / denom
-    l2 = F.softplus(y_out).sum() / denom
+    l1 = F.softplus(-y_positive).sum() / denom
+    l2 = F.softplus(y_negative).sum() / denom
     return l1 + l2
+
+
+def patch_gen_loss(y_out):
+    batch_size, _, w, h = y_out.size()
+    denom = batch_size * w * h
+    loss_adv = F.softplus(-y_out).sum() / denom
+    return loss_adv
+
+
+def plot(label, x_ticks, y_values, path):
+    root = os.path.dirname(path)
+    if not os.path.isdir(root):
+        os.makedirs(root)
+    f = plt.figure()
+    a = f.add_subplot(111)
+    a.set_xlabel('iteration')
+    a.set_xticks(label)
+    a.set_ylabel(label)
+    a.grid()
+    a.plot(x_ticks, y_values, marker='x', label=label)
+    l = a.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    f.savefig(path, bboox_extra_artists=(l,), bbox_inches='tight')
 
 
 def save_image_tensor(tensor, filename):
@@ -126,6 +149,9 @@ def main():
         generator = generator.cuda()
         discriminator = discriminator.cuda()
 
+    x_ticks, dis_loss_list = list(), list()
+    gen_loss_list, normalization_list = list(), list()
+    plot_root = os.path.join(out, 'plot')
     for iter_ in tqdm.tqdm(range(args.n_iter)):
         generator.train()
         discriminator.train()
@@ -142,45 +168,55 @@ def main():
         # L1 loss: mask's L1 norm
 
         gen_input_1 = torch.cat([human, item, want], dim=1)
-        y_1 = generator(gen_input_1)
-        y_1, mask_l1_norm_1 = generator.render(y_1, human)
+        human_out = generator(gen_input_1)
+        human_out, mask_l1_norm_1 = generator.render(human_out, human)
 
-        gen_input_2 = torch.cat([normalize(y_1), want, item], dim=1)
-        y_2 = generator(gen_input_2)
-        y_2, _ = generator.render(y_2, y_1)
+        gen_input_2 = torch.cat([normalize(human_out), want, item], dim=1)
+        human_cycle = generator(gen_input_2)
+        human_cycle, _ = generator.render(human_cycle, human_out)
 
-        loss_cycle = torch.norm(human - y_2, p=2)
+        loss_cycle = args.gamma_cycle * torch.norm(
+            human - human_cycle, p=args.norm)
 
         # Discriminator runs 3 times.
         # # positive examples (human, item)
         # # negative examples (y, want), (human, want)
         batch_size = human.size(0)
-        feature_human = discriminator(human)
-        feature_item = discriminator(item)
-        feature_want = discriminator(want)
-        feature_y_1 = discriminator(y_1)
+        positive_input = F.cat([human, item], dim=1)
+        negative_input_1 = F.cat([human_out, want], dim=1)
+        negative_input_2 = F.cat([human, want], dim=1)
 
-        positive_loss = patch_loss(feature_human, feature_item, same=True)
-        negative_loss = patch_loss(
-            feature_y_1, want, same=False) + patch_loss(feature_item, feature_want, same=False)
-        adversarial_loss = positive_loss + negative_loss
+        y_true = discriminator(positive_input)
+        y_fake_1 = discriminator(negative_input_1)
+        y_fake_2 = discriminator(negative_input_2)
+
+        loss_dis = patch_dis_loss(y_true, y_fake_2)
+        loss_adv_gen = patch_gen_loss(y_fake_1)
+        loss_gen = loss_adv_gen +\
+            args.gamma_id * mask_l1_norm_1 + args.gamma_cycle * loss_cycle
 
         # Backprop gradient and update parameters
         opt_G.zero_grad()
-        opt_D.zero_grad()
-        adversarial_loss.backward()
-        normalizing_term = args.gamma_id * mask_l1_norm_1 + args.gamma_cycle * loss_cycle
-        normalizing_term.backward()
+        loss_gen.backward()
         opt_G.step()
+        opt_D.zero_grad()
+        loss_dis.backward()
         opt_D.step()
 
         if iter_ % args.log_interval == 0:
-            positive_loss = positive_loss.data[0] / batch_size
-            negative_loss = negative_loss.data[0] / batch_size
-            normalizing_term = normalizing_term.data[0] / batch_size
-            msg = "Iter {} [{}/{}]\tPosi loss: {:.5f}\tNega loss: {:.5f}\tNorm: {:.5f}\n"
-            tqdm.tqdm.write(msg.format(iter_, iter_, args.n_iter,
-                                       positive_loss, negative_loss, normalizing_term))
+            batch_size = human.size(0)
+            l_D = loss_dis.cpu().data[0] / batch_size
+            l_G_adv = loss_gen.cpu().data[0] / batch_size
+            l_G_norm = args.gamma_id * mask_l1_norm_1 + loss_cycle
+            l_G_norm = l_G_norm.cpu().data[0] / batch_size
+            line = '#Iteration {}/{}\tdis/loss: {:4f}\tgen/loss: {:.4f}\t'\
+                'gen/normalization: {:4f}\n'
+            tqdm.tqdm.write(line.format(
+                iter_, args.n_iter, l_D, l_G_adv, l_G_norm))
+            x_ticks.append(iter_)
+            dis_loss_list.append(l_D)
+            gen_loss_list.append(l_G_adv)
+            normalization_list.append(l_G_norm)
 
         if iter_ % args.ckpt_interval == 0:
             # save checkpoint and images used in this iteration
@@ -202,8 +238,18 @@ def main():
             save_image_tensor(human, os.path.join(image_root, 'human.png'))
             save_image_tensor(item, os.path.join(image_root, 'item.png'))
             save_image_tensor(want, os.path.join(image_root, 'want.png'))
-            save_image_tensor(y_1, os.path.join(image_root, 'y_1.png'))
-            save_image_tensor(y_2, os.path.join(image_root, 'y_2_cycle.png'))
+            save_image_tensor(human_out, os.path.join(
+                image_root, 'human_out.png'))
+            save_image_tensor(human_cycle, os.path.join(
+                image_root, 'human_cycle_cycle.png'))
+            # save plot
+            plot('dis_loss', x_ticks, dis_loss_list,
+                 os.path.join(plot_root, 'dis_loss.png'))
+            plot('gen_loss', x_ticks, gen_loss_list,
+                 os.path.join(plot_root, 'gen_loss.png'))
+            plot('gen_normalizing_term', x_ticks, normalization_list,
+                 os.path.join(plot_root, 'normalizing_term.png'))
+
             if args.cuda:
                 generator = generator.cuda()
                 discriminator = discriminator.cuda()
