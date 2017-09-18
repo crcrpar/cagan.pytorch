@@ -61,7 +61,15 @@ class DataDownloader(object):
         duration = (end - start).total_seconds() / 60.
         self.logger.debug('[Download Images] finished jobs')
         self.logger.debug('Jobs from {} to {}, took {} minutes'.format(
-            start.strftime('%m/%d, %H:%M:%S'), end.strftime('%m/%d, %H:%M:%S'), duration))
+            start.strftime('%m/%d, %H:%M:%S'),
+            end.strftime('%m/%d, %H:%M:%S'),
+            duration))
+        self.logger.debug('[Make triplet]')
+        self.make_triplet_list()
+
+    def make_triplet_list(self):
+        item_image_url_dict = self.get_tops_model_item_image_urls(_update=False, save=False)
+        pass
 
     def prepare_job_list(self):
 
@@ -102,7 +110,7 @@ class DataDownloader(object):
 
         return job_list
 
-    def get_tops_model_item_image_urls(self, _update=False):
+    def get_tops_model_item_image_urls(self, _update=False, save=True):
 
         def parse_article(article):
             article_id = article['id']
@@ -148,8 +156,9 @@ class DataDownloader(object):
 
         if self.update:
             self._copy_prev_dict()
-        with open(DataDownloader._cached_item_image_url_dict, 'w') as f:
-            json.dump(item_image_url_dict, f)
+        if save:
+            with open(DataDownloader._cached_item_image_url_dict, 'w') as f:
+                json.dump(item_image_url_dict, f)
 
         return item_image_url_dict
 
