@@ -52,7 +52,7 @@ class DataDownloader(object):
         n_cpu = multiprocessing.cpu_count() - 1
         self.logger.debug('[Download Images] run {} processes'.format(n_cpu))
         start = dt.now()
-        pool = multiprocessing.pool.Pool(processes=n_cpu)
+        pool = multiprocessing.Pool(processes=n_cpu)
         r = pool.map_async(work, job_list, callback=results.append)
         r.wait()
         pool.close()
@@ -65,10 +65,11 @@ class DataDownloader(object):
             end.strftime('%m/%d, %H:%M:%S'),
             duration))
         self.logger.debug('[Make triplet]')
-        self.make_triplet_list()
+        # self.make_triplet_list()
 
     def make_triplet_list(self):
-        item_image_url_dict = self.get_tops_model_item_image_urls(_update=False, save=False)
+        item_image_url_dict = self.get_tops_model_item_image_urls(
+            _update=False, save=False)
         pass
 
     def prepare_job_list(self):
@@ -79,8 +80,9 @@ class DataDownloader(object):
             tmp_job_list = list()
             if not os.path.isdir(base_root):
                 os.makedirs(base_root)
-            for image_type, url in kwds.items():
-                dst = os.path.join(base_root, '{}.jpg'.format(image_type))
+            for idx, (image_type, url) in enumerate(kwds.items()):
+                dst = os.path.join(
+                    base_root, '{}_{}.jpg'.format(image_type, idx))
                 job = DataDownloader.CMD_BASE.format(url=url, dst=dst)
                 tmp_job_list.append(job.split(' '))
             return tmp_job_list
@@ -95,7 +97,7 @@ class DataDownloader(object):
         # run preparing a list of jobs
         job_list = list()
         n_cpu = multiprocessing.cpu_count() - 1
-        p = multiprocessing.pool.Pool(n_cpu)
+        p = multiprocessing.Pool(n_cpu)
         for item_id, type_url_dict in item_image_url_dict.items():
             r = p.apply_async(make_job_from_article_dict,
                               args=(item_id,), kwds=type_url_dict,
@@ -115,20 +117,14 @@ class DataDownloader(object):
         def parse_article(article):
             article_id = article['id']
             media_images = article['media']['images']
-            is_MODEL = [i['type'] == 'MODEL' for i in media_images]
-            id_NONMODEL_MANUFACTURER = [i['type'] in (
-                'NON_MODEL', 'MANUFACTURER') for i in media_images]
-            if not (any(is_MODEL) and any(id_NONMODEL_MANUFACTURER)):
+            is_NON_MODEL = [i['type'] == 'NON_MODEL' for i in media_images]
+            if all(is_NON_MODEL):
                 return {article_id: None}
 
             tmp_dict = dict()
-            for image in media_images:
-                if image['type'] == 'MODEL':
-                    tmp_dict['MODEL'] = image['smallHdUrl']
-                if image['type'] == 'NON_MODEL':
-                    tmp_dict['NON_MODEL'] = image['smallHdUrl']
-                if image['type'] == 'MANUFACTURER':
-                    tmp_dict['MANUFACTURER'] = image['smallHdUrl']
+            for idx, image in enumerate(media_images):
+                _key = '{}_{}'.format(image['type'], idx)
+                tmp_dict[_key] = image['smallHdUrl']
             return {article_id: tmp_dict}
 
         if os.path.exists(DataDownloader._cached_tops_categories):
@@ -141,7 +137,7 @@ class DataDownloader(object):
         query_builder = zalando.Query()
         query_builder.set_categories(tops_categories)
         n_cpu = multiprocessing.cpu_count() - 1
-        pool = multiprocessing.pool.Pool(processes=n_cpu)
+        pool = multiprocessing.Pool(processes=n_cpu)
         r = pool.map_async(parse_article,
                            zalando.get_articles_all_pages(query_builder),
                            callback=raw_itemid_type_url_dict.update)
