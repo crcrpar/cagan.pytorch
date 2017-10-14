@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 def get_deconv(deconv_type, in_ch, out_ch, bias=False):
@@ -23,9 +24,9 @@ class Generator(nn.Module):
         _conv = {'kernel_size': 3, 'stride': 2, 'bias': bias}
         # embedding
         self.pad1 = nn.ReflectionPad2d(1)
-        self.conv1 = nn.Conv2d(9, 64, kernel_size=3, stride=2, bias=False)
+        self.conv1 = nn.Conv2d(9, 64, **_conv)
         self.pad2 = nn.ReflectionPad2d(1)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=2, bias=False)
+        self.conv2 = nn.Conv2d(64, 128, **_conv)
         self.norm2 = nn.InstanceNorm2d(128)
         self.pad3 = nn.ReflectionPad2d(1)
         self.conv3 = nn.Conv2d(128, 256, **_conv)
@@ -86,7 +87,7 @@ class Generator(nn.Module):
         return y, stored_downsampled
 
     def render(self, x, y):
-        mask = y[:, 0, Ellipsis]
+        mask = F.sigmoid(y)[:, 0, Ellipsis]
         y = y[:, 1:, Ellipsis]
         return mask * y + (1 - mask) * x, torch.norm(mask, p=self.mask_norm)
 
