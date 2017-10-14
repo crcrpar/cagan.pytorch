@@ -169,10 +169,12 @@ def main():
     if not os.path.isdir(out):
         os.makedirs(out)
     log_dir = os.path.join(out, 'tensorboard')
-    if not os.path.isdir(log_dir):
-        os.makedirs(log_dir)
+    os.makedirs(log_dir)
+    ckpt_dir = os.path.join(out, 'checkpoints')
+    os.makedirs(ckpt_dir)
     args.out = out
     args.log_dir = log_dir
+    args.ckpt_dir = ckpt_dir
 
     # logger
     logger = getLogger()
@@ -213,6 +215,8 @@ def main():
         generator = generator.cuda()
         discriminator = discriminator.cuda()
 
+    start = dt.now()
+    logger.debug('===start {}'.format(start.strftime("%m/%d, %H:%M")))
     for iter_ in range(args.n_iter):
         # register params to tensorboard
         if args.cuda:
@@ -265,7 +269,7 @@ def main():
                 'dis_state': discriminator.state_dict(),
                 'opt_gen': opt_G.state_dict(),
                 'opt_dis': opt_D.state_dict()},
-                os.path.join(out, 'ckpt_iter_{}.pth'.format(iter_)))
+                os.path.join(ckpt_dir, 'ckpt_iter_{}.pth'.format(iter_)))
 
             # save images
             if args.cuda:
@@ -297,10 +301,14 @@ def main():
         'dis_state': discriminator.state_dict(),
         'opt_gen': opt_G.state_dict(),
         'opt_dis': opt_D.state_dict()},
-        os.path.join(out, 'ckpt_iter_{}.pth'.format(args.n_iter)))
+        os.path.join(ckpt_dir, 'ckpt_iter_{}.pth'.format(args.n_iter)))
 
     writer.export_scalars_to_json(os.path.join(log_dir + 'scalars.json'))
     writer.close()
+    end = dt.now()
+    logger.debug('===end {}, {}[min]'.format(end.strftime(
+        '%m/%d, %H:%M'), (end - start).total_seconds() / 60.))
+
 
 if __name__ == '__main__':
     main()
